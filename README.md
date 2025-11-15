@@ -8,6 +8,10 @@
 - ✅ **低内存分配**: 利用 `Span<T>` 和 `Memory<T>` 减少 GC 压力
 - ✅ **完全异步**: 基于 `async/await` 的现代异步模式
 - ✅ **Modbus TCP**: 完整的 Modbus TCP 客户端实现
+- ✅ **扩展数据类型**: 原生支持 `float`、`double`、`int32`、`uint32` 等数据类型
+- ✅ **灵活字节序**: 支持大端、小端及字交换等多种字节序模式
+- ✅ **原始字节访问**: 提供 `byte[]` 读写接口用于高级场景
+- ✅ **地址兼容性**: 支持 0 基和 1 基地址模式切换
 - ✅ **易于使用**: 简洁的 API 设计，开箱即用
 - ✅ **类型安全**: 强类型接口，编译时类型检查
 - ✅ **可扩展**: 清晰的架构设计，易于扩展
@@ -67,6 +71,85 @@ await client.WriteSingleCoilAsync(slaveId, address: 0, value: true);
 await client.DisconnectAsync();
 ```
 
+### 扩展数据类型
+
+库提供了对常见工业数据类型的原生支持：
+
+```csharp
+using ZHIOT.Modbus;
+
+await using var client = ModbusClientFactory.CreateTcpClient("192.168.1.100", 502);
+await client.ConnectAsync();
+
+byte slaveId = 1;
+
+// 读写 Float (32位浮点数，占用2个寄存器)
+float[] floatValues = { 3.14159f, -123.456f };
+await client.WriteMultipleRegistersFloatAsync(slaveId, 0, floatValues);
+var readFloats = await client.ReadHoldingRegistersFloatAsync(slaveId, 0, 4);
+
+// 读写 Double (64位浮点数，占用4个寄存器)
+double[] doubleValues = { Math.PI, Math.E };
+await client.WriteMultipleRegistersDoubleAsync(slaveId, 10, doubleValues);
+var readDoubles = await client.ReadHoldingRegistersDoubleAsync(slaveId, 10, 8);
+
+// 读写 Int32 (32位有符号整数，占用2个寄存器)
+int[] intValues = { 123456, -987654 };
+await client.WriteMultipleRegistersInt32Async(slaveId, 20, intValues);
+var readInts = await client.ReadHoldingRegistersInt32Async(slaveId, 20, 4);
+
+// 读写 UInt32 (32位无符号整数，占用2个寄存器)
+uint[] uintValues = { 0x12345678, 0xABCDEF00 };
+await client.WriteMultipleRegistersUInt32Async(slaveId, 30, uintValues);
+var readUInts = await client.ReadHoldingRegistersUInt32Async(slaveId, 30, 4);
+
+// 原始字节访问（用于自定义数据格式）
+byte[] rawBytes = { 0x12, 0x34, 0x56, 0x78 };
+await client.WriteMultipleRegistersBytesAsync(slaveId, 40, rawBytes);
+var readBytes = await client.ReadHoldingRegistersBytesAsync(slaveId, 40, 2);
+```
+
+### 字节序配置
+
+不同设备可能使用不同的字节序，库支持灵活配置：
+
+```csharp
+using ZHIOT.Modbus;
+using ZHIOT.Modbus.Core;
+
+await using var client = ModbusClientFactory.CreateTcpClient("192.168.1.100", 502);
+await client.ConnectAsync();
+
+// 设置字节序（默认为 BigEndian，符合 Modbus 标准）
+client.ByteOrder = ByteOrder.BigEndian;        // ABCD (标准)
+// client.ByteOrder = ByteOrder.LittleEndian;     // DCBA
+// client.ByteOrder = ByteOrder.BigEndianSwap;    // BADC
+// client.ByteOrder = ByteOrder.LittleEndianSwap; // CDAB
+
+float value = 3.14159f;
+await client.WriteMultipleRegistersFloatAsync(1, 0, new[] { value });
+var result = await client.ReadHoldingRegistersFloatAsync(1, 0, 2);
+```
+
+### 地址模式配置
+
+某些设备使用 1 基地址（地址从 1 开始），库可以自动转换：
+
+```csharp
+await using var client = ModbusClientFactory.CreateTcpClient("192.168.1.100", 502);
+await client.ConnectAsync();
+
+// 启用 1 基地址模式
+client.IsOneBasedAddressing = true;
+
+// 现在可以使用从 1 开始的地址，客户端会自动转换为协议的 0 基地址
+var registers = await client.ReadHoldingRegistersAsync(1, startAddress: 1, quantity: 10);
+// 实际读取的是协议地址 0-9
+
+await client.WriteMultipleRegistersAsync(1, startAddress: 1, new ushort[] { 100, 200 });
+// 实际写入的是协议地址 0-1
+```
+
 ## 架构设计
 
 本库采用分层架构设计:
@@ -91,6 +174,10 @@ await client.DisconnectAsync();
 2. **栈内存分配**: 小数据使用 `stackalloc` 分配在栈上
 3. **Span 和 Memory**: 协议解析和构建过程使用 `Span<T>` 避免堆分配
 4. **异步设计**: 全异步实现，提高并发能力
+5. **高性能数据转换**: 扩展数据类型转换采用零分配或最小分配策略
+   - 直接从 PDU 字节流转换为目标类型，避免中间 `ushort[]` 分配
+   - 使用 `MemoryMarshal.Cast` 实现零拷贝类型转换
+   - 利用 `BinaryPrimitives` 进行高效的字节序转换
 
 ## 项目结构
 
@@ -100,11 +187,19 @@ ZHIOT.Modbus/
 │   └── ZHIOT.Modbus/
 │       ├── Abstractions/       # 核心抽象接口
 │       ├── Core/               # 协议核心实现
+│       │   ├── ModbusPduBuilder.cs
+│       │   ├── ModbusPduParser.cs
+│       │   ├── ModbusTypes.cs
+│       │   └── ByteOrder.cs    # 字节序定义
 │       ├── Client/             # Modbus 客户端
 │       ├── Transport/          # 传输层实现
 │       └── Utils/              # 辅助工具
+│           └── ModbusDataConverter.cs  # 高性能数据转换器
 ├── tests/
 │   └── ZHIOT.Modbus.Tests/    # 单元测试
+│       ├── ModbusPduBuilderTests.cs
+│       ├── ModbusPduParserTests.cs
+│       └── ModbusDataConverterTests.cs
 └── samples/
     └── ZHIOT.Modbus.Sample/   # 示例项目
 ```
@@ -128,6 +223,11 @@ dotnet test
 
 ## 路线图
 
+- [x] Modbus TCP 基础实现
+- [x] 扩展数据类型支持 (float, double, int32, uint32)
+- [x] 字节序配置
+- [x] 1基地址模式
+- [x] 原始字节访问
 - [ ] Modbus RTU 支持
 - [ ] Modbus ASCII 支持
 - [ ] Modbus 服务端实现

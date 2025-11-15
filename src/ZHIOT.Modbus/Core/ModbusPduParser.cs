@@ -110,6 +110,26 @@ public static class ModbusPduParser
     }
 
     /// <summary>
+    /// 从寄存器响应 PDU 中提取原始寄存器数据（字节形式）
+    /// 用于高性能读取路径，避免中间 ushort[] 分配
+    /// </summary>
+    /// <param name="pdu">完整的 PDU 响应</param>
+    /// <returns>包含寄存器数据的原始字节切片</returns>
+    public static ReadOnlySpan<byte> ParseRegistersResponsePayload(ReadOnlySpan<byte> pdu)
+    {
+        CheckForException(pdu);
+
+        if (pdu.Length < 2)
+            throw new InvalidOperationException("PDU too short");
+
+        byte byteCount = pdu[1];
+        if (pdu.Length < 2 + byteCount)
+            throw new InvalidOperationException("PDU data incomplete");
+
+        return pdu.Slice(2, byteCount);
+    }
+
+    /// <summary>
     /// 解析写单个线圈响应 (功能码 0x05)
     /// </summary>
     public static (ushort address, bool value) ParseWriteSingleCoilResponse(ReadOnlySpan<byte> pdu)

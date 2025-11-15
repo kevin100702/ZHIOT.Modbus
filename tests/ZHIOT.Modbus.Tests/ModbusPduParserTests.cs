@@ -101,4 +101,41 @@ public class ModbusPduParserTests
         // Act & Assert - Should not throw
         ModbusPduParser.CheckForException(pdu);
     }
+
+    [TestMethod]
+    public void ParseRegistersResponsePayload_ShouldReturnCorrectSpan()
+    {
+        // Arrange
+        byte[] pdu = { 0x03, 0x06, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC };
+
+        // Act
+        var payload = ModbusPduParser.ParseRegistersResponsePayload(pdu);
+
+        // Assert
+        Assert.AreEqual(6, payload.Length);
+        Assert.AreEqual(0x12, payload[0]);
+        Assert.AreEqual(0x34, payload[1]);
+        Assert.AreEqual(0x56, payload[2]);
+        Assert.AreEqual(0x78, payload[3]);
+        Assert.AreEqual(0x9A, payload[4]);
+        Assert.AreEqual(0xBC, payload[5]);
+    }
+
+    [TestMethod]
+    public void ParseRegistersResponsePayload_ShouldThrowOnIncompletePdu()
+    {
+        // Arrange
+        byte[] pdu = { 0x03, 0x06, 0x12, 0x34 }; // Claims 6 bytes but only has 2
+
+        // Act & Assert
+        try
+        {
+            ModbusPduParser.ParseRegistersResponsePayload(pdu);
+            Assert.Fail("Expected InvalidOperationException was not thrown");
+        }
+        catch (InvalidOperationException)
+        {
+            // Expected
+        }
+    }
 }
