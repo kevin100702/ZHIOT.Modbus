@@ -1,4 +1,5 @@
-﻿using ZHIOT.Modbus;
+﻿using System.IO.Ports;
+using ZHIOT.Modbus;
 using ZHIOT.Modbus.Core;
 
 Console.WriteLine("=== ZHIOT.Modbus Sample - 高性能扩展功能演示 ===");
@@ -12,6 +13,9 @@ await RunExtendedDataTypesSample();
 
 // 示例 3: 演示字节序和1基地址功能
 await RunByteOrderAndAddressingSample();
+
+// 示例 4: Modbus RTU 串口通信
+await RunModbusRtuSample();
 
 Console.WriteLine();
 Console.WriteLine("按任意键退出...");
@@ -313,5 +317,124 @@ static async Task RunByteOrderAndAddressingSample()
     catch (Exception ex)
     {
         Console.WriteLine($"错误: {ex.Message}");
+    }
+}
+
+static async Task RunModbusRtuSample()
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Modbus RTU 示例 ===");
+    Console.WriteLine("------------------------");
+    Console.WriteLine("注意: 这个示例需要连接真实的 Modbus RTU 设备或串口模拟器");
+    Console.WriteLine();
+
+    // 创建 RTU 客户端
+    // 注意: 将 COM1 替换为实际的串口名称（Windows: COM1, COM2... / Linux: /dev/ttyUSB0, /dev/ttyS0...）
+    await using var client = ModbusClientFactory.CreateRtuClient(
+        portName: "COM1",
+        baudRate: 9600,
+        parity: Parity.None,
+        dataBits: 8,
+        stopBits: StopBits.One
+    );
+
+    try
+    {
+        // 连接串口
+        Console.WriteLine("正在打开串口 COM1 (9600, 8N1)...");
+        await client.ConnectAsync();
+        Console.WriteLine("串口已打开!");
+        Console.WriteLine();
+
+        byte slaveId = 1;
+
+        // 示例 1: 读取保持寄存器
+        Console.WriteLine("1. 读取保持寄存器 (地址 0-9):");
+        try
+        {
+            var registers = await client.ReadHoldingRegistersAsync(slaveId, startAddress: 0, quantity: 10);
+            Console.WriteLine($"   读取到 {registers.Length} 个寄存器:");
+            for (int i = 0; i < registers.Length; i++)
+            {
+                Console.WriteLine($"   寄存器 {i}: {registers[i]} (0x{registers[i]:X4})");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"   读取失败: {ex.Message}");
+        }
+        Console.WriteLine();
+
+        // 示例 2: 写单个寄存器
+        Console.WriteLine("2. 写单个寄存器 (地址 0, 值 1234):");
+        try
+        {
+            await client.WriteSingleRegisterAsync(slaveId, address: 0, value: 1234);
+            Console.WriteLine("   写入成功!");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"   写入失败: {ex.Message}");
+        }
+        Console.WriteLine();
+
+        // 示例 3: 读写 Float 数据
+        Console.WriteLine("3. 读写 Float 数据:");
+        try
+        {
+            float[] floatValues = { 3.14159f, -123.456f };
+            await client.WriteMultipleRegistersFloatAsync(slaveId, startAddress: 10, values: floatValues);
+            Console.WriteLine($"   写入 {floatValues.Length} 个 float 值成功!");
+
+            var readFloats = await client.ReadHoldingRegistersFloatAsync(slaveId, startAddress: 10, quantity: 4);
+            Console.WriteLine($"   读取到 {readFloats.Length} 个 float 值:");
+            for (int i = 0; i < readFloats.Length; i++)
+            {
+                Console.WriteLine($"   Float {i}: {readFloats[i]}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"   操作失败: {ex.Message}");
+        }
+        Console.WriteLine();
+
+        // 示例 4: 读取线圈
+        Console.WriteLine("4. 读取线圈 (地址 0-15):");
+        try
+        {
+            var coils = await client.ReadCoilsAsync(slaveId, startAddress: 0, quantity: 16);
+            Console.WriteLine($"   读取到 {coils.Length} 个线圈:");
+            for (int i = 0; i < coils.Length; i++)
+            {
+                Console.WriteLine($"   线圈 {i}: {(coils[i] ? "ON" : "OFF")}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"   读取失败: {ex.Message}");
+        }
+        Console.WriteLine();
+
+        // 示例 5: 使用自定义串口配置
+        Console.WriteLine("5. 自定义串口配置示例:");
+        Console.WriteLine("   可以使用 SerialPortSettings 类进行更详细的配置:");
+        Console.WriteLine("   - 不同的波特率 (1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200)");
+        Console.WriteLine("   - 不同的校验位 (None, Even, Odd, Mark, Space)");
+        Console.WriteLine("   - 不同的数据位 (7, 8)");
+        Console.WriteLine("   - 不同的停止位 (One, Two, OnePointFive)");
+        Console.WriteLine("   - 自定义超时设置");
+
+        await client.DisconnectAsync();
+        Console.WriteLine();
+        Console.WriteLine("串口已关闭");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"错误: {ex.Message}");
+        if (ex.InnerException != null)
+        {
+            Console.WriteLine($"内部错误: {ex.InnerException.Message}");
+        }
     }
 }

@@ -8,6 +8,7 @@
 - ✅ **低内存分配**: 利用 `Span<T>` 和 `Memory<T>` 减少 GC 压力
 - ✅ **完全异步**: 基于 `async/await` 的现代异步模式
 - ✅ **Modbus TCP**: 完整的 Modbus TCP 客户端实现
+- ✅ **Modbus RTU**: 完整的 Modbus RTU 串口通信实现（基于 System.IO.Pipelines + System.IO.Ports）
 - ✅ **扩展数据类型**: 原生支持 `float`、`double`、`int32`、`uint32` 等数据类型
 - ✅ **灵活字节序**: 支持大端、小端及字交换等多种字节序模式
 - ✅ **原始字节访问**: 提供 `byte[]` 读写接口用于高级场景
@@ -69,6 +70,23 @@ await client.WriteSingleCoilAsync(slaveId, address: 0, value: true);
 
 // 断开连接
 await client.DisconnectAsync();
+
+// --- Modbus RTU 示例 (串口) ---
+// 使用 RTU 客户端连接真实设备或虚拟串口
+await using var rtu = ModbusClientFactory.CreateRtuClient(
+    portName: "COM1",      // Windows 示例：COM1；Linux 示例：/dev/ttyUSB0
+    baudRate: 9600,
+    parity: Parity.None,
+    dataBits: 8,
+    stopBits: StopBits.One
+);
+
+await rtu.ConnectAsync();
+
+// 从站 ID = 1，读取 10 个保持寄存器
+var rtuRegisters = await rtu.ReadHoldingRegistersAsync(1, startAddress: 0, quantity: 10);
+
+await rtu.DisconnectAsync();
 ```
 
 ### 扩展数据类型
@@ -228,7 +246,7 @@ dotnet test
 - [x] 字节序配置
 - [x] 1基地址模式
 - [x] 原始字节访问
-- [ ] Modbus RTU 支持
+- [x] Modbus RTU 支持
 - [ ] Modbus ASCII 支持
 - [ ] Modbus 服务端实现
 - [ ] 更多功能码支持 (诊断、文件传输等)

@@ -1,0 +1,564 @@
+# Feature Implementation Plan: CRC16-奇偶校验切换
+
+## ✅ Todo Checklist
+- [ ] 在 `ModbusRtuTypes.cs` 中添加 `Crc16Variant` 枚举类型
+- [ ] 修改 `ModbusCrc16.cs` 添加支持奇偶变体的计算和验证方法
+- [ ] 在 `SerialPortSettings` 类中添加 `Crc16Variant` 配置属性
+- [ ] 修改 `IModbusClient` 接口添加 `Crc16Variant` 属性
+- [ ] 更新 `ModbusRtuClient` 实现以支持可配置的 CRC 变体
+- [ ] 修改 `ModbusRtuAduBuilder` 和 `ModbusRtuAduParser` 以支持 CRC 变体参数
+- [ ] 更新 `ModbusClientFactory` 以支持 CRC 变体配置
+- [ ] 添加单元测试验证奇偶两种 CRC 变体
+- [ ] 更新示例代码展示如何切换 CRC 变体
+- [ ] Final Review and Testing
+
+## 🔍 Analysis & Investigation
+
+### Codebase Structure
+当前代码库结构清晰，主要相关文件包括：
+- `src/ZHIOT.Modbus/Core/ModbusCrc16.cs` - CRC-16 计算和验证的核心实现
+- `src/ZHIOT.Modbus/Core/ModbusRtuTypes.cs` - RTU 相关类型定义
+- `src/ZHIOT.Modbus/Core/ModbusRtuAduBuilder.cs` - RTU ADU 构建器
+- `src/ZHIOT.Modbus/Core/ModbusRtuAduParser.cs` - RTU ADU 解析器
+- `src/ZHIOT.Modbus/Client/ModbusRtuClient.cs` - RTU 客户端实现
+- `src/ZHIOT.Modbus/Abstractions/IModbusClient.cs` - 客户端接口定义
+- `src/ZHIOT.Modbus/ModbusClientFactory.cs` - 客户端工厂类
+- `tests/ZHIOT.Modbus.Tests/ModbusCrc16Tests.cs` - CRC 测试
+
+### Current Architecture
+当前的 CRC-16 实现：
+- 使用查表法实现高性能计算
+- 多项式：0xA001（反向）
+- 初始值：0xFFFF
+- **最终异或：0x0000**（偶校验，Modbus 标准）
+- `Calculate` 方法计算 CRC 值
+- `Verify` 方法验证完整帧的 CRC
+
+现实中存在的问题：
+- Modbus RTU 官方规范使用 XorOut = 0x0000（偶校验）
+- 大量设备使用 XorOut = 0xFFFF（奇校验）
+- 当设备使用不同变体时，会导致 CRC 校验失败
+- 目前代码硬编码为偶校验，无法切换
+
+### Dependencies & Integration Points
+需要修改的集成点：
+1. **ModbusCrc16** - 核心计算逻辑需要支持两种变体
+2. **ModbusRtuAduBuilder** - 构建 ADU 时需要使用指定的 CRC 变体
+3. **ModbusRtuAduParser** - 解析验证时需要使用指定的 CRC 变体
+4. **ModbusRtuClient** - 客户端需要存储并传递 CRC 变体配置
+5. **SerialPortSettings** - 配置类需要包含 CRC 变体选项
+6. **IModbusClient** - 接口需要暴露 CRC 变体属性（类似 ByteOrder）
+
+### Considerations & Challenges
+
+#### 技术挑战
+1. **向后兼容性** - 必须保持默认行为为偶校验（Modbus 标准），不能破坏现有代码
+2. **性能影响** - CRC 计算是高频操作，新增参数不能显著影响性能
+3. **API 一致性** - 需要与现有的 `ByteOrder`、`IsOneBasedAddressing` 等配置属性保持一致的设计风格
+4. **传递路径** - CRC 变体需要从客户端配置一直传递到 `ModbusCrc16` 的计算方法
+
+#### 设计考虑
+1. 使用枚举类型 `Crc16Variant` 清晰表示奇偶两种变体
+2. 在 `IModbusClient` 接口添加属性，允许运行时动态切换（类似 `ByteOrder`）
+3. 修改 `ModbusCrc16` 的静态方法，增加可选的变体参数，默认为偶校验
+4. 更新 ADU 构建器和解析器，从客户端获取 CRC 变体配置
+
+## 📋 Implementation Plan
+
+### Prerequisites
+- 了解 CRC-16/MODBUS 算法原理
+- 理解奇偶变体的区别（仅在最终异或值不同：0x0000 vs 0xFFFF）
+- 确保所有现有单元测试通过
+
+### Step-by-Step Implementation
+
+#### 步骤 1: 定义 CRC-16 变体枚举
+- **文件**: `src/ZHIOT.Modbus/Core/ModbusRtuTypes.cs`
+- **变更内容**: 
+  - 添加 `Crc16Variant` 枚举，包含 `Even`（偶，0x0000）和 `Odd`（奇，0xFFFF）两个值
+  - 添加 XML 文档注释，说明两种变体的区别和使用场景
+- **示例代码**:
+```csharp
+/// <summary>
+/// CRC-16 校验变体
+/// Modbus RTU 有两种 CRC-16 实际变体，区别在于最终异或值（XorOut）
+/// </summary>
+public enum Crc16Variant
+{
+    /// <summary>
+    /// 偶校验（Even）- XorOut = 0x0000
+    /// Modbus RTU 官方标准规范使用此变体
+    /// </summary>
+    Even = 0,
+
+    /// <summary>
+    /// 奇校验（Odd）- XorOut = 0xFFFF
+    /// 大量现实设备使用此变体，当标准偶校验失败时可尝试切换
+    /// </summary>
+    Odd = 1
+}
+```
+
+#### 步骤 2: 更新 SerialPortSettings 配置类
+- **文件**: `src/ZHIOT.Modbus/Core/ModbusRtuTypes.cs`
+- **变更内容**:
+  - 在 `SerialPortSettings` 类中添加 `Crc16Variant` 属性
+  - 默认值设置为 `Crc16Variant.Even`（保持向后兼容）
+- **示例代码**:
+```csharp
+/// <summary>
+/// CRC-16 校验变体，默认为偶校验（Modbus 标准）
+/// 当遇到 CRC 校验失败时，可尝试切换到奇校验
+/// </summary>
+public Crc16Variant Crc16Variant { get; set; } = Crc16Variant.Even;
+```
+
+#### 步骤 3: 修改 ModbusCrc16 核心算法
+- **文件**: `src/ZHIOT.Modbus/Core/ModbusCrc16.cs`
+- **变更内容**:
+  - 保留现有的 `Calculate(ReadOnlySpan<byte> data)` 方法（默认偶校验），保持向后兼容
+  - 添加重载方法 `Calculate(ReadOnlySpan<byte> data, Crc16Variant variant)`
+  - 保留现有的 `Verify(ReadOnlySpan<byte> frame)` 方法（默认偶校验）
+  - 添加重载方法 `Verify(ReadOnlySpan<byte> frame, Crc16Variant variant)`
+  - 在计算方法的最后根据变体类型决定是否对结果取反
+- **关键逻辑**:
+```csharp
+// 在 Calculate 方法的最后
+public static ushort Calculate(ReadOnlySpan<byte> data, Crc16Variant variant = Crc16Variant.Even)
+{
+    ushort crc = 0xFFFF;
+
+    foreach (byte b in data)
+    {
+        byte tableIndex = (byte)(crc ^ b);
+        crc = (ushort)((crc >> 8) ^ CrcTable[tableIndex]);
+    }
+
+    // 根据变体类型决定是否取反
+    if (variant == Crc16Variant.Odd)
+    {
+        crc ^= 0xFFFF;
+    }
+
+    return crc;
+}
+```
+
+#### 步骤 4: 更新 IModbusClient 接口
+- **文件**: `src/ZHIOT.Modbus/Abstractions/IModbusClient.cs`
+- **变更内容**:
+  - 添加 `Crc16Variant` 属性（仅用于 RTU 客户端，TCP 客户端会忽略此属性）
+  - 属性应该支持 get 和 set，允许运行时动态切换
+- **示例代码**:
+```csharp
+/// <summary>
+/// 获取或设置 CRC-16 校验变体，默认为偶校验（Modbus RTU 标准）
+/// 此属性仅对 Modbus RTU 客户端有效，TCP 客户端会忽略此属性
+/// 当遇到 CRC 校验失败时，可尝试切换到奇校验（Odd）
+/// </summary>
+Crc16Variant Crc16Variant { get; set; }
+```
+
+#### 步骤 5: 更新 ModbusTcpClient 实现
+- **文件**: `src/ZHIOT.Modbus/Client/ModbusTcpClient.cs`
+- **变更内容**:
+  - 添加 `Crc16Variant` 属性实现（TCP 不使用 CRC，但为了接口一致性需要实现）
+  - 属性实现仅存储值但不使用，避免混淆
+- **示例代码**:
+```csharp
+/// <inheritdoc/>
+/// <remarks>此属性对 TCP 客户端无效，仅为接口一致性而实现</remarks>
+public Crc16Variant Crc16Variant { get; set; } = Crc16Variant.Even;
+```
+
+#### 步骤 6: 更新 ModbusRtuClient 实现
+- **文件**: `src/ZHIOT.Modbus/Client/ModbusRtuClient.cs`
+- **变更内容**:
+  - 添加 `Crc16Variant` 属性，默认值为 `Crc16Variant.Even`
+  - 在构造函数中从 `SerialPortSettings` 读取初始值（如果提供）
+  - 修改 `SendRequestAsync` 方法，将 CRC 变体传递给 `ModbusRtuAduBuilder.BuildAdu`
+  - 修改 `TryParseResponse` 方法，将 CRC 变体传递给 `ModbusRtuAduParser.VerifyCrc`
+- **关键变更点**:
+  - 在字段声明区添加属性
+  - 修改 ADU 构建调用
+  - 修改 CRC 验证调用
+
+#### 步骤 7: 更新 ModbusRtuAduBuilder
+- **文件**: `src/ZHIOT.Modbus/Core/ModbusRtuAduBuilder.cs`
+- **变更内容**:
+  - 保留现有的 `BuildAdu` 方法（默认偶校验）
+  - 添加重载方法接受 `Crc16Variant` 参数
+  - 在计算 CRC 时传递变体参数
+- **示例代码**:
+```csharp
+public static int BuildAdu(Span<byte> buffer, byte slaveId, ReadOnlySpan<byte> pdu, Crc16Variant variant = Crc16Variant.Even)
+{
+    if (buffer.Length < 1 + pdu.Length + 2)
+        throw new ArgumentException("Buffer is too small", nameof(buffer));
+
+    buffer[0] = slaveId;
+    pdu.CopyTo(buffer.Slice(1));
+    int frameLength = 1 + pdu.Length;
+
+    var crc = ModbusCrc16.Calculate(buffer.Slice(0, frameLength), variant);
+    BinaryPrimitives.WriteUInt16LittleEndian(buffer.Slice(frameLength), crc);
+
+    return frameLength + 2;
+}
+```
+
+#### 步骤 8: 更新 ModbusRtuAduParser
+- **文件**: `src/ZHIOT.Modbus/Core/ModbusRtuAduParser.cs`
+- **变更内容**:
+  - 保留现有方法（默认偶校验）
+  - 为 `ExtractPdu` 和 `VerifyCrc` 方法添加接受 `Crc16Variant` 参数的重载
+- **示例代码**:
+```csharp
+public static ReadOnlySpan<byte> ExtractPdu(ReadOnlySpan<byte> adu, Crc16Variant variant = Crc16Variant.Even)
+{
+    if (adu.Length < RtuAdu.MinSize)
+        throw new InvalidOperationException($"ADU too short: {adu.Length} bytes (minimum {RtuAdu.MinSize})");
+
+    if (!ModbusCrc16.Verify(adu, variant))
+        throw new InvalidOperationException("CRC verification failed");
+
+    return adu.Slice(1, adu.Length - 3);
+}
+
+public static bool VerifyCrc(ReadOnlySpan<byte> adu, Crc16Variant variant = Crc16Variant.Even)
+{
+    if (adu.Length < RtuAdu.MinSize)
+        return false;
+
+    return ModbusCrc16.Verify(adu, variant);
+}
+```
+
+#### 步骤 9: 更新 ModbusClientFactory
+- **文件**: `src/ZHIOT.Modbus/ModbusClientFactory.cs`
+- **变更内容**:
+  - 在使用 `SerialPortSettings` 创建客户端时，确保 `Crc16Variant` 被传递
+  - 为便捷重载方法添加可选的 `crc16Variant` 参数
+- **示例代码**:
+```csharp
+public static IModbusClient CreateRtuClient(
+    string portName,
+    int baudRate = 9600,
+    Parity parity = Parity.None,
+    int dataBits = 8,
+    StopBits stopBits = StopBits.One,
+    Crc16Variant crc16Variant = Crc16Variant.Even)
+{
+    var settings = new SerialPortSettings
+    {
+        PortName = portName,
+        BaudRate = baudRate,
+        Parity = parity,
+        DataBits = dataBits,
+        StopBits = stopBits,
+        Crc16Variant = crc16Variant
+    };
+    return CreateRtuClient(settings);
+}
+```
+
+#### 步骤 10: 修改 ModbusRtuClient 以读取配置
+- **文件**: `src/ZHIOT.Modbus/Client/ModbusRtuClient.cs`
+- **变更内容**:
+  - 需要访问 `SerialPortSettings`，可能需要在构造函数中存储引用或直接读取 CRC 变体
+  - 由于 `ModbusRtuClient` 构造函数接受 `ITransport`，需要考虑如何传递配置
+  - **方案 1**: 在 `SerialPortTransport` 中添加属性暴露 `SerialPortSettings`
+  - **方案 2**: 在 `ModbusRtuClient` 构造函数中添加可选的 `Crc16Variant` 参数
+  - **推荐方案 2**：更简洁，避免传输层与配置耦合
+
+修改构造函数：
+```csharp
+public ModbusRtuClient(ITransport transport, Crc16Variant crc16Variant = Crc16Variant.Even)
+{
+    _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+    Crc16Variant = crc16Variant;
+}
+```
+
+修改工厂方法以传递配置：
+```csharp
+public static IModbusClient CreateRtuClient(SerialPortSettings settings)
+{
+    var transport = new SerialPortTransport(settings);
+    return new ModbusRtuClient(transport, settings.Crc16Variant);
+}
+```
+
+#### 步骤 11: 更新所有 ADU 操作调用
+- **文件**: `src/ZHIOT.Modbus/Client/ModbusRtuClient.cs`
+- **变更内容**:
+  - 在 `SendRequestAsync` 方法中，调用 `ModbusRtuAduBuilder.BuildAdu` 时传递 `Crc16Variant` 属性
+  - 在 `TryParseResponse` 方法中，调用 `ModbusRtuAduParser.VerifyCrc` 时传递 `Crc16Variant` 属性
+- **修改点**:
+```csharp
+// 在 SendRequestAsync 中
+var adu = new byte[1 + pdu.Length + 2];
+ModbusRtuAduBuilder.BuildAdu(adu, slaveId, pdu, Crc16Variant);
+
+// 在 TryParseResponse 中
+if (!ModbusRtuAduParser.VerifyCrc(frame, Crc16Variant))
+{
+    buffer = buffer.Slice(1);
+    return false;
+}
+```
+
+#### 步骤 12: 添加单元测试 - CRC 变体计算
+- **文件**: `tests/ZHIOT.Modbus.Tests/ModbusCrc16Tests.cs`
+- **变更内容**:
+  - 添加测试验证偶校验（Even）CRC 计算正确性
+  - 添加测试验证奇校验（Odd）CRC 计算正确性
+  - 添加测试验证同一数据在两种变体下的 CRC 值不同
+  - 添加测试验证 `Verify` 方法对两种变体的支持
+- **测试用例**:
+```csharp
+[TestMethod]
+public void Calculate_EvenVariant_ReturnsCorrectCrc()
+{
+    // 使用已知的 Modbus 标准帧
+    byte[] data = { 0x01, 0x03, 0x00, 0x00, 0x00, 0x0A };
+    ushort expectedCrc = 0xCDC5; // 已知正确值
+
+    ushort actualCrc = ModbusCrc16.Calculate(data, Crc16Variant.Even);
+
+    Assert.AreEqual(expectedCrc, actualCrc);
+}
+
+[TestMethod]
+public void Calculate_OddVariant_ReturnsInvertedCrc()
+{
+    byte[] data = { 0x01, 0x03, 0x00, 0x00, 0x00, 0x0A };
+    ushort evenCrc = ModbusCrc16.Calculate(data, Crc16Variant.Even);
+    ushort oddCrc = ModbusCrc16.Calculate(data, Crc16Variant.Odd);
+
+    // 奇校验 = 偶校验取反
+    Assert.AreEqual((ushort)(evenCrc ^ 0xFFFF), oddCrc);
+}
+
+[TestMethod]
+public void Verify_EvenVariant_ValidFrame_ReturnsTrue()
+{
+    // 标准 Modbus 偶校验帧
+    byte[] frame = { 0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD };
+    
+    bool isValid = ModbusCrc16.Verify(frame, Crc16Variant.Even);
+    
+    Assert.IsTrue(isValid);
+}
+
+[TestMethod]
+public void Verify_OddVariant_ValidFrame_ReturnsTrue()
+{
+    // 构建奇校验帧
+    byte[] data = { 0x01, 0x03, 0x00, 0x00, 0x00, 0x0A };
+    ushort oddCrc = ModbusCrc16.Calculate(data, Crc16Variant.Odd);
+    
+    byte[] frame = new byte[data.Length + 2];
+    data.CopyTo(frame, 0);
+    frame[data.Length] = (byte)(oddCrc & 0xFF);
+    frame[data.Length + 1] = (byte)(oddCrc >> 8);
+    
+    bool isValid = ModbusCrc16.Verify(frame, Crc16Variant.Odd);
+    
+    Assert.IsTrue(isValid);
+}
+
+[TestMethod]
+public void Verify_WrongVariant_ReturnsFalse()
+{
+    // 偶校验帧用奇校验验证应该失败
+    byte[] frame = { 0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD };
+    
+    bool isValid = ModbusCrc16.Verify(frame, Crc16Variant.Odd);
+    
+    Assert.IsFalse(isValid);
+}
+```
+
+#### 步骤 13: 添加集成测试 - ADU 构建和解析
+- **文件**: `tests/ZHIOT.Modbus.Tests/ModbusRtuAduBuilderTests.cs` 和 `ModbusRtuAduParserTests.cs`
+- **变更内容**:
+  - 测试使用奇校验构建 ADU
+  - 测试使用奇校验解析和验证 ADU
+  - 测试变体不匹配时的行为
+- **测试用例**:
+```csharp
+[TestMethod]
+public void BuildAdu_OddVariant_CreatesValidFrame()
+{
+    byte slaveId = 0x01;
+    byte[] pdu = { 0x03, 0x00, 0x00, 0x00, 0x0A };
+    Span<byte> buffer = stackalloc byte[256];
+
+    int length = ModbusRtuAduBuilder.BuildAdu(buffer, slaveId, pdu, Crc16Variant.Odd);
+
+    Assert.AreEqual(pdu.Length + 3, length);
+    Assert.IsTrue(ModbusCrc16.Verify(buffer.Slice(0, length), Crc16Variant.Odd));
+}
+
+[TestMethod]
+public void ExtractPdu_OddVariant_ExtractsCorrectly()
+{
+    byte slaveId = 0x01;
+    byte[] pdu = { 0x03, 0x00, 0x00, 0x00, 0x0A };
+    Span<byte> adu = stackalloc byte[256];
+    int aduLength = ModbusRtuAduBuilder.BuildAdu(adu, slaveId, pdu, Crc16Variant.Odd);
+
+    var extractedPdu = ModbusRtuAduParser.ExtractPdu(adu.Slice(0, aduLength), Crc16Variant.Odd);
+
+    Assert.IsTrue(pdu.AsSpan().SequenceEqual(extractedPdu));
+}
+```
+
+#### 步骤 14: 更新示例代码
+- **文件**: `samples/ZHIOT.Modbus.Sample/Program.cs`
+- **变更内容**:
+  - 在 `RunModbusRtuSample` 方法中添加演示如何使用奇校验
+  - 添加注释说明何时需要切换 CRC 变体
+  - 展示运行时切换 CRC 变体的示例
+- **示例代码**:
+```csharp
+// 示例 6: CRC-16 变体切换
+Console.WriteLine("6. CRC-16 变体切换演示:");
+Console.WriteLine("   大多数设备使用标准的偶校验（Even, Modbus 官方规范）");
+Console.WriteLine("   但有些设备使用奇校验（Odd），当遇到 CRC 错误时可尝试切换");
+Console.WriteLine();
+
+// 默认使用偶校验（Modbus 标准）
+Console.WriteLine("   当前使用: 偶校验（Even - Modbus 标准）");
+client.Crc16Variant = Crc16Variant.Even;
+try
+{
+    var registers = await client.ReadHoldingRegistersAsync(slaveId, 0, 10);
+    Console.WriteLine("   偶校验通信成功!");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"   偶校验失败: {ex.Message}");
+    Console.WriteLine("   尝试切换到奇校验...");
+    
+    // 切换到奇校验重试
+    client.Crc16Variant = Crc16Variant.Odd;
+    try
+    {
+        var registers = await client.ReadHoldingRegistersAsync(slaveId, 0, 10);
+        Console.WriteLine("   奇校验通信成功!");
+    }
+    catch (Exception ex2)
+    {
+        Console.WriteLine($"   奇校验也失败: {ex2.Message}");
+    }
+}
+
+// 或者在创建客户端时直接指定
+Console.WriteLine();
+Console.WriteLine("   也可以在创建客户端时直接指定 CRC 变体:");
+await using var oddClient = ModbusClientFactory.CreateRtuClient(
+    portName: "COM1",
+    baudRate: 9600,
+    crc16Variant: Crc16Variant.Odd
+);
+Console.WriteLine("   已创建使用奇校验的 RTU 客户端");
+```
+
+#### 步骤 15: 编译并修复错误
+- **操作**: 运行 `dotnet build` 编译整个解决方案
+- **处理**: 
+  - 检查是否有编译错误
+  - 修复类型不匹配、命名空间缺失等问题
+  - 确保所有新增的类型和方法都正确引用
+
+#### 步骤 16: 运行单元测试
+- **操作**: 运行 `dotnet test` 执行所有测试
+- **验证**:
+  - 所有现有测试应该继续通过（向后兼容）
+  - 新增的 CRC 变体测试应该全部通过
+  - 检查测试覆盖率
+
+#### 步骤 17: 手动测试
+- **操作**: 运行示例程序，手动验证功能
+- **测试场景**:
+  - 使用默认偶校验连接标准 Modbus RTU 设备
+  - 测试运行时切换 CRC 变体
+  - 使用奇校验创建客户端
+  - 验证错误场景的处理
+
+### Testing Strategy
+
+#### 单元测试
+1. **ModbusCrc16Tests.cs**:
+   - 测试偶校验计算正确性（现有测试）
+   - 测试奇校验计算正确性（新增）
+   - 测试两种变体的 CRC 值关系（互为取反）
+   - 测试 `Verify` 方法对两种变体的支持
+   - 测试变体参数的默认值
+
+2. **ModbusRtuAduBuilderTests.cs**:
+   - 测试使用偶校验构建 ADU（现有测试）
+   - 测试使用奇校验构建 ADU（新增）
+   - 验证构建的 ADU 可以被对应变体验证通过
+
+3. **ModbusRtuAduParserTests.cs**:
+   - 测试使用偶校验解析 ADU（现有测试）
+   - 测试使用奇校验解析 ADU（新增）
+   - 测试变体不匹配时解析失败
+
+#### 集成测试
+- 创建模拟设备，分别使用奇偶校验
+- 测试客户端与两种设备的通信
+- 测试运行时切换变体的场景
+
+#### 手动测试
+- 使用 Modbus Slave 模拟器测试（如 Mod_RSsim）
+- 测试真实的 Modbus RTU 设备
+- 验证文档和示例代码的准确性
+
+### Implementation Guidelines for Executors
+
+#### Backend Implementation
+- **MANDATORY: Compile and Iterate** - 完成后端代码修改后，必须编译并迭代修复所有错误
+  - **步骤 1**: 每次修改文件后，立即运行编译验证 `dotnet build d:\WorkSpace\OpenSource\ZHIOT.Modbus\ZHIOT.Modbus.sln`
+  - **步骤 2**: 使用 `get_errors` 工具检查编译错误
+  - **步骤 3**: 根据错误消息修复问题（类型不匹配、命名空间缺失、参数错误等）
+  - **步骤 4**: 重复步骤 1-3 直到编译成功无错误
+  - **步骤 5**: 确保所有警告都已修复或有文档说明原因
+  - **DO NOT** 在编译成功前认为实现完成
+
+#### Testing Requirements
+- **MANDATORY: Run Tests** - 实现完成后必须运行所有测试
+  - 运行命令: `dotnet test d:\WorkSpace\OpenSource\ZHIOT.Modbus\ZHIOT.Modbus.sln`
+  - 确保所有现有测试继续通过（向后兼容性验证）
+  - 确保所有新增测试通过（新功能验证）
+  - 如果测试失败，分析原因并修复
+
+## ✨ Success Criteria
+
+### 功能完整性
+- ✅ 用户可以通过 `SerialPortSettings.Crc16Variant` 配置 CRC 变体
+- ✅ 用户可以通过 `IModbusClient.Crc16Variant` 属性运行时切换变体
+- ✅ 默认使用偶校验（Modbus 标准），保持向后兼容
+- ✅ 奇校验和偶校验都能正确工作
+- ✅ CRC 计算和验证逻辑支持两种变体
+
+### 质量标准
+- ✅ 所有现有单元测试继续通过
+- ✅ 新增的 CRC 变体测试全部通过
+- ✅ 代码编译无错误无警告
+- ✅ API 设计与现有风格一致（参考 `ByteOrder`）
+- ✅ 性能无明显下降（CRC 计算是高频操作）
+
+### 文档和示例
+- ✅ 所有新增的类、方法、属性都有完整的 XML 文档注释
+- ✅ 示例代码展示如何使用 CRC 变体切换功能
+- ✅ 注释说明何时需要使用奇校验（CRC 错误排查场景）
+
+### 用户体验
+- ✅ 使用简单直观，只需设置一个枚举属性
+- ✅ 默认行为符合标准，不需要额外配置
+- ✅ 错误提示清晰，当 CRC 失败时提示用户可以尝试切换变体
+- ✅ 支持运行时动态切换，无需重新创建客户端
