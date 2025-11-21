@@ -9,6 +9,7 @@
 - ✅ **完全异步**: 基于 `async/await` 的现代异步模式
 - ✅ **Modbus TCP**: 完整的 Modbus TCP 客户端实现
 - ✅ **Modbus RTU**: 完整的 Modbus RTU 串口通信实现（基于 System.IO.Pipelines + System.IO.Ports）
+- ✅ **Modbus ASCII**: 完整的 Modbus ASCII 串口通信实现，采用 LRC-8 校验和 ASCII 编码
 - ✅ **扩展数据类型**: 原生支持 `float`、`double`、`int32`、`uint32` 等数据类型
 - ✅ **灵活字节序**: 支持大端、小端及字交换等多种字节序模式
 - ✅ **原始字节访问**: 提供 `byte[]` 读写接口用于高级场景
@@ -87,6 +88,24 @@ await rtu.ConnectAsync();
 var rtuRegisters = await rtu.ReadHoldingRegistersAsync(1, startAddress: 0, quantity: 10);
 
 await rtu.DisconnectAsync();
+
+// --- Modbus ASCII 示例 (串口) ---
+// ASCII 模式使用 LRC-8 校验和 ASCII 编码，对长距离串口通信更有容错性
+await using var ascii = ModbusClientFactory.CreateAsciiClient(
+    portName: "COM1",
+    baudRate: 9600,
+    parity: Parity.None,
+    dataBits: 8,
+    stopBits: StopBits.One
+);
+
+await ascii.ConnectAsync();
+
+// 使用方式与 RTU 相同
+var asciiRegisters = await ascii.ReadHoldingRegistersAsync(1, startAddress: 0, quantity: 10);
+await ascii.WriteSingleRegisterAsync(1, address: 0, value: 5678);
+
+await ascii.DisconnectAsync();
 ```
 
 ### 扩展数据类型
@@ -149,6 +168,56 @@ await client.WriteMultipleRegistersFloatAsync(1, 0, new[] { value });
 var result = await client.ReadHoldingRegistersFloatAsync(1, 0, 2);
 ```
 
+### Modbus ASCII 协议特性
+
+Modbus ASCII 是 Modbus 的 ASCII 编码变体，相比 RTU 二进制模式提供了更好的长距离通信容错性。
+
+**主要特点:**
+
+- **LRC-8 校验**: 使用纵向冗余校验 (LRC) 代替 CRC-16，算法更简单
+- **ASCII 编码**: 数据使用 ASCII 十六进制编码，便于调试和监控
+- **帧格式**: `:` + SlaveID(2hex) + FunctionCode(2hex) + Data(Nhex) + LRC(2hex) + `\r\n`
+- **容错性更好**: ASCII 编码对单字节翻转更敏感，便于检测传输错误
+- **传输效率**: 相比 RTU 增加约 50% 的开销，但在嘈杂的长距离链路上可靠性更高
+
+**何时使用 ASCII:**
+
+- 长距离串口通信（>100 米）
+- 工业环境中干扰较大的场景
+- 需要实时监控和调试协议流量
+- 对数据的可靠性要求高于传输效率
+
+**配置 ASCII 客户端:**
+
+```csharp
+using ZHIOT.Modbus;
+using ZHIOT.Modbus.Core;
+
+// 方式 1: 使用便利方法
+var client = ModbusClientFactory.CreateAsciiClient("COM1", 9600);
+
+// 方式 2: 使用详细配置
+var settings = new AsciiLineSettings
+{
+    PortName = "COM1",
+    BaudRate = 9600,
+    Parity = Parity.None,
+    DataBits = 8,
+    StopBits = StopBits.One,
+    ReadTimeout = 1000,    // 读取超时 (毫秒)
+    WriteTimeout = 1000    // 写入超时 (毫秒)
+};
+var client = ModbusClientFactory.CreateAsciiClient(settings);
+
+await client.ConnectAsync();
+
+// 所有操作与 TCP/RTU 客户端相同
+byte slaveId = 1;
+var registers = await client.ReadHoldingRegistersAsync(slaveId, 0, 10);
+
+await client.DisconnectAsync();
+```
+
 ### 地址模式配置
 
 某些设备使用 1 基地址（地址从 1 开始），库可以自动转换：
@@ -208,16 +277,39 @@ ZHIOT.Modbus/
 │       │   ├── ModbusPduBuilder.cs
 │       │   ├── ModbusPduParser.cs
 │       │   ├── ModbusTypes.cs
-│       │   └── ByteOrder.cs    # 字节序定义
+│       │   ├── ModbusRtuTypes.cs
+│       │   ├── ModbusRtuAduBuilder.cs
+│       │   ├── ModbusRtuAduParser.cs
+│       │   ├── ModbusAsciiTypes.cs      # ASCII 类型定义
+│       │   ├── ModbusLrc.cs             # LRC-8 校验算法
+│       │   ├── ModbusAsciiCodec.cs      # ASCII 编码/解码
+│       │   ├── ModbusAsciiAduBuilder.cs # ASCII ADU 构建
+│       │   ├── ModbusAsciiAduParser.cs  # ASCII ADU 解析
+│       │   ├── ModbusCrc16.cs
+│       │   └── ByteOrder.cs             # 字节序定义
 │       ├── Client/             # Modbus 客户端
+│       │   ├── ModbusTcpClient.cs
+│       │   ├── ModbusRtuClient.cs
+│       │   └── ModbusAsciiClient.cs     # ASCII 客户端实现
 │       ├── Transport/          # 传输层实现
-│       └── Utils/              # 辅助工具
-│           └── ModbusDataConverter.cs  # 高性能数据转换器
+│       │   ├── TcpTransport.cs
+│       │   └── SerialPortTransport.cs
+│       ├── Utils/              # 辅助工具
+│       │   └── ModbusDataConverter.cs  # 高性能数据转换器
+│       └── ModbusClientFactory.cs      # 客户端工厂
 ├── tests/
 │   └── ZHIOT.Modbus.Tests/    # 单元测试
 │       ├── ModbusPduBuilderTests.cs
 │       ├── ModbusPduParserTests.cs
-│       └── ModbusDataConverterTests.cs
+│       ├── ModbusRtuAduBuilderTests.cs
+│       ├── ModbusRtuAduParserTests.cs
+│       ├── ModbusLrcTests.cs            # ASCII LRC 测试
+│       ├── ModbusAsciiCodecTests.cs     # ASCII 编码测试
+│       ├── ModbusAsciiAduBuilderTests.cs # ASCII 构建测试
+│       ├── ModbusAsciiAduParserTests.cs # ASCII 解析测试
+│       ├── ModbusDataConverterTests.cs
+│       ├── ModbusCrc16Tests.cs
+│       └── Test1.cs
 └── samples/
     └── ZHIOT.Modbus.Sample/   # 示例项目
 ```
@@ -239,6 +331,22 @@ dotnet run
 dotnet test
 ```
 
+## 协议对比
+
+| 特性 | Modbus TCP | Modbus RTU | Modbus ASCII |
+|------|-----------|-----------|--------------|
+| **传输介质** | 以太网 | 串口 | 串口 |
+| **编码方式** | 二进制 | 二进制 | ASCII 十六进制 |
+| **校验方式** | 无 | CRC-16 | LRC-8 |
+| **帧头** | MBAP 报头 | 无 | `:` 字符 |
+| **帧尾** | 无 | 无 | `\r\n` |
+| **帧大小** | 较小 | 较小 | 约 RTU 的 1.5 倍 |
+| **容错性** | 一般 | 一般 | 优秀（ASCII 编码） |
+| **传输距离** | 通常 <100m | <1000m | >1000m |
+| **适用场景** | 局域网设备 | 工业环保距离 | 长距离恶劣环境 |
+| **调试难度** | 需要专门工具 | 需要专门工具 | 可直接查看 ASCII 内容 |
+| **实时性** | 优秀 | 优秀 | 较好 |
+
 ## 路线图
 
 - [x] Modbus TCP 基础实现
@@ -247,10 +355,9 @@ dotnet test
 - [x] 1基地址模式
 - [x] 原始字节访问
 - [x] Modbus RTU 支持
-- [ ] Modbus ASCII 支持
+- [x] Modbus ASCII 支持 (LRC-8 校验，ASCII 编码)
 - [ ] Modbus 服务端实现
-- [ ] 更多功能码支持 (诊断、文件传输等)
-- [ ] 连接池和重连机制
+- [ ] 重连机制
 - [ ] 性能基准测试
 - [ ] NuGet 包发布
 

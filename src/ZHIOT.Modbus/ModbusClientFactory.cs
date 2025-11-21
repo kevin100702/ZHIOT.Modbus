@@ -84,4 +84,52 @@ public static class ModbusClientFactory
         };
         return CreateRtuClient(settings);
     }
+
+    /// <summary>
+    /// 创建 Modbus ASCII 客户端（使用串口配置对象）
+    /// </summary>
+    /// <param name="settings">串口配置参数</param>
+    /// <returns>Modbus ASCII 客户端实例</returns>
+    public static IModbusClient CreateAsciiClient(AsciiLineSettings settings)
+    {
+        var serialSettings = new SerialPortSettings
+        {
+            PortName = settings.PortName,
+            BaudRate = settings.BaudRate,
+            Parity = settings.Parity,
+            DataBits = settings.DataBits,
+            StopBits = settings.StopBits,
+            ReadTimeout = settings.ReadTimeout,
+            WriteTimeout = settings.WriteTimeout
+        };
+        var transport = new SerialPortTransport(serialSettings);
+        return new ModbusAsciiClient(transport);
+    }
+
+    /// <summary>
+    /// 创建 Modbus ASCII 客户端（便捷重载）
+    /// </summary>
+    /// <param name="portName">串口名称（例如 "COM1", "/dev/ttyUSB0"）</param>
+    /// <param name="baudRate">波特率，默认 9600</param>
+    /// <param name="parity">校验位，默认 None</param>
+    /// <param name="dataBits">数据位，默认 8</param>
+    /// <param name="stopBits">停止位，默认 One</param>
+    /// <returns>Modbus ASCII 客户端实例</returns>
+    public static IModbusClient CreateAsciiClient(
+        string portName,
+        int baudRate = 9600,
+        Parity parity = Parity.None,
+        int dataBits = 8,
+        StopBits stopBits = StopBits.One)
+    {
+        var settings = new AsciiLineSettings
+        {
+            PortName = portName,
+            BaudRate = baudRate,
+            Parity = parity,
+            DataBits = dataBits,
+            StopBits = stopBits
+        };
+        return CreateAsciiClient(settings);
+    }
 }
