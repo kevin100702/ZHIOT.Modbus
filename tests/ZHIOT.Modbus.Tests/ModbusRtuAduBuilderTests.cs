@@ -138,4 +138,43 @@ public class ModbusRtuAduBuilderTests
         var frame = buffer.Slice(0, length);
         Assert.IsTrue(ModbusCrc16.Verify(frame));
     }
+
+    [TestMethod]
+    public void BuildAdu_OddVariant_CreatesValidFrame()
+    {
+        // Arrange
+        byte slaveId = 0x01;
+        byte[] pdu = { 0x03, 0x00, 0x00, 0x00, 0x0A };
+        Span<byte> buffer = stackalloc byte[256];
+
+        // Act
+        int length = ModbusRtuAduBuilder.BuildAdu(buffer, slaveId, pdu, Crc16Variant.Odd);
+
+        // Assert
+        Assert.AreEqual(pdu.Length + 3, length);
+        Assert.IsTrue(ModbusCrc16.Verify(buffer.Slice(0, length), Crc16Variant.Odd));
+        // 奇校验和偶校验应该生成不同的 CRC
+        byte[] evenBuffer = new byte[256];
+        int evenLength = ModbusRtuAduBuilder.BuildAdu(evenBuffer, slaveId, pdu, Crc16Variant.Even);
+        Assert.IsFalse(buffer.Slice(0, length).SequenceEqual(evenBuffer.AsSpan(0, evenLength)));
+    }
+
+    [TestMethod]
+    public void BuildAdu_BothVariants_DifferentCrc()
+    {
+        // Arrange
+        byte slaveId = 0x01;
+        byte[] pdu = { 0x03, 0x00, 0x00, 0x00, 0x0A };
+        byte[] bufferEven = new byte[256];
+        byte[] bufferOdd = new byte[256];
+
+        // Act
+        int evenLength = ModbusRtuAduBuilder.BuildAdu(bufferEven, slaveId, pdu, Crc16Variant.Even);
+        int oddLength = ModbusRtuAduBuilder.BuildAdu(bufferOdd, slaveId, pdu, Crc16Variant.Odd);
+
+        // Assert
+        Assert.AreEqual(evenLength, oddLength);
+        // CRC 字节应该不同
+        Assert.IsFalse(bufferEven.AsSpan(evenLength - 2, 2).SequenceEqual(bufferOdd.AsSpan(oddLength - 2, 2)));
+    }
 }

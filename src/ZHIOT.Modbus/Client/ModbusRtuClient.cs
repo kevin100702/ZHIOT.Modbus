@@ -23,6 +23,13 @@ public class ModbusRtuClient : IModbusClient
     public ByteOrder ByteOrder { get; set; } = ByteOrder.BigEndian;
 
     /// <summary>
+    /// 获取或设置 CRC-16 校验变体，默认为偶校验（Modbus RTU 标准）
+    /// 此属性仅对 Modbus RTU 协议有效，Modbus TCP 不使用 CRC 校验
+    /// 当遇到 CRC 校验失败时，可尝试切换到奇校验（Odd）
+    /// </summary>
+    public Crc16Variant Crc16Variant { get; set; } = Crc16Variant.Even;
+
+    /// <summary>
     /// 创建 Modbus RTU 客户端
     /// </summary>
     /// <param name="transport">传输层实现</param>
@@ -330,7 +337,7 @@ public class ModbusRtuClient : IModbusClient
         {
             // 构建完整的 RTU ADU (SlaveId + PDU + CRC)
             var adu = new byte[1 + pdu.Length + 2];
-            ModbusRtuAduBuilder.BuildAdu(adu, slaveId, pdu);
+            ModbusRtuAduBuilder.BuildAdu(adu, slaveId, pdu, Crc16Variant);
 
             // 发送请求
             var output = _transport.Pipe.Output;
@@ -429,7 +436,7 @@ public class ModbusRtuClient : IModbusClient
         buffer.Slice(0, expectedLength).CopyTo(frame);
 
         // 验证 CRC
-        if (!ModbusRtuAduParser.VerifyCrc(frame))
+        if (!ModbusRtuAduParser.VerifyCrc(frame, Crc16Variant))
         {
             // CRC 错误，跳过这个字节
             buffer = buffer.Slice(1);
@@ -437,7 +444,7 @@ public class ModbusRtuClient : IModbusClient
         }
 
         // 提取 PDU
-        var pduSpan = ModbusRtuAduParser.ExtractPdu(frame);
+        var pduSpan = ModbusRtuAduParser.ExtractPdu(frame, Crc16Variant);
         pdu = pduSpan.ToArray();
 
         // 移动缓冲区位置

@@ -3,6 +3,25 @@ using System.IO.Ports;
 namespace ZHIOT.Modbus.Core;
 
 /// <summary>
+/// CRC-16 校验变体
+/// Modbus RTU 有两种 CRC-16 实际变体，区别在于最终异或值（XorOut）
+/// </summary>
+public enum Crc16Variant
+{
+    /// <summary>
+    /// 偶校验（Even）- XorOut = 0x0000
+    /// Modbus RTU 官方标准规范使用此变体
+    /// </summary>
+    Even = 0,
+
+    /// <summary>
+    /// 奇校验（Odd）- XorOut = 0xFFFF
+    /// 大量现实设备使用此变体，当标准偶校验失败时可尝试切换
+    /// </summary>
+    Odd = 1
+}
+
+/// <summary>
 /// Modbus RTU 应用数据单元 (ADU)
 /// </summary>
 public readonly struct RtuAdu
@@ -72,4 +91,10 @@ public class SerialPortSettings
     /// 帧间延迟 (毫秒)，用于实现 RTU 的静默期
     /// </summary>
     public int InterFrameDelay { get; set; } = 10;
+
+    /// <summary>
+    /// CRC-16 校验变体，默认为偶校验（Modbus 标准）
+    /// 当遇到 CRC 校验失败时，可尝试切换到奇校验
+    /// </summary>
+    public Crc16Variant Crc16Variant { get; set; } = Crc16Variant.Even;
 }

@@ -212,4 +212,73 @@ public class ModbusRtuAduParserTests
             Assert.AreEqual(originalPdu[i], extractedPdu[i]);
         }
     }
+
+    [TestMethod]
+    public void ExtractPdu_OddVariant_ExtractsCorrectly()
+    {
+        // Arrange
+        byte slaveId = 0x01;
+        byte[] pdu = { 0x03, 0x00, 0x00, 0x00, 0x0A };
+        Span<byte> adu = stackalloc byte[256];
+        int aduLength = ModbusRtuAduBuilder.BuildAdu(adu, slaveId, pdu, Crc16Variant.Odd);
+
+        // Act
+        var extractedPdu = ModbusRtuAduParser.ExtractPdu(adu.Slice(0, aduLength), Crc16Variant.Odd);
+
+        // Assert
+        Assert.IsTrue(pdu.AsSpan().SequenceEqual(extractedPdu));
+    }
+
+    [TestMethod]
+    public void VerifyCrc_OddVariant_ValidFrame_ReturnsTrue()
+    {
+        // Arrange
+        byte slaveId = 0x01;
+        byte[] pdu = { 0x03, 0x00, 0x00, 0x00, 0x0A };
+        Span<byte> adu = stackalloc byte[256];
+        int aduLength = ModbusRtuAduBuilder.BuildAdu(adu, slaveId, pdu, Crc16Variant.Odd);
+
+        // Act
+        bool isValid = ModbusRtuAduParser.VerifyCrc(adu.Slice(0, aduLength), Crc16Variant.Odd);
+
+        // Assert
+        Assert.IsTrue(isValid);
+    }
+
+    [TestMethod]
+    public void VerifyCrc_WrongVariant_ReturnsFalse()
+    {
+        // Arrange: 用奇校验创建的 ADU，用偶校验验证应该失败
+        byte slaveId = 0x01;
+        byte[] pdu = { 0x03, 0x00, 0x00, 0x00, 0x0A };
+        Span<byte> adu = stackalloc byte[256];
+        int aduLength = ModbusRtuAduBuilder.BuildAdu(adu, slaveId, pdu, Crc16Variant.Odd);
+
+        // Act
+        bool isValid = ModbusRtuAduParser.VerifyCrc(adu.Slice(0, aduLength), Crc16Variant.Even);
+
+        // Assert
+        Assert.IsFalse(isValid);
+    }
+
+    [TestMethod]
+    public void ExtractPdu_OddVariant_WrongVariant_ThrowsException()
+    {
+        // Arrange: 用奇校验创建的 ADU，用偶校验解析应该抛出异常
+        byte slaveId = 0x01;
+        byte[] pdu = { 0x03, 0x00, 0x00, 0x00, 0x0A };
+        Span<byte> adu = stackalloc byte[256];
+        int aduLength = ModbusRtuAduBuilder.BuildAdu(adu, slaveId, pdu, Crc16Variant.Odd);
+
+        // Act & Assert
+        try
+        {
+            ModbusRtuAduParser.ExtractPdu(adu.Slice(0, aduLength), Crc16Variant.Even);
+            Assert.Fail("Expected InvalidOperationException was not thrown");
+        }
+        catch (InvalidOperationException)
+        {
+            // Expected
+        }
+    }
 }

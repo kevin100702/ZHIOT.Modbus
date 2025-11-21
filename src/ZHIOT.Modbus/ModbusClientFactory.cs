@@ -31,7 +31,9 @@ public static class ModbusClientFactory
     public static IModbusClient CreateRtuClient(SerialPortSettings settings)
     {
         var transport = new SerialPortTransport(settings);
-        return new ModbusRtuClient(transport);
+        var client = new ModbusRtuClient(transport);
+        client.Crc16Variant = settings.Crc16Variant;
+        return client;
     }
 
     /// <summary>
@@ -50,13 +52,35 @@ public static class ModbusClientFactory
         int dataBits = 8,
         StopBits stopBits = StopBits.One)
     {
+        return CreateRtuClient(portName, baudRate, parity, dataBits, stopBits, Crc16Variant.Even);
+    }
+
+    /// <summary>
+    /// 创建 Modbus RTU 客户端（便捷重载，支持 CRC 变体指定）
+    /// </summary>
+    /// <param name="portName">串口名称（例如 "COM1", "/dev/ttyUSB0"）</param>
+    /// <param name="baudRate">波特率，默认 9600</param>
+    /// <param name="parity">校验位，默认 None</param>
+    /// <param name="dataBits">数据位，默认 8</param>
+    /// <param name="stopBits">停止位，默认 One</param>
+    /// <param name="crc16Variant">CRC-16 变体，默认为偶校验（Modbus 标准）</param>
+    /// <returns>Modbus RTU 客户端实例</returns>
+    public static IModbusClient CreateRtuClient(
+        string portName,
+        int baudRate = 9600,
+        Parity parity = Parity.None,
+        int dataBits = 8,
+        StopBits stopBits = StopBits.One,
+        Crc16Variant crc16Variant = Crc16Variant.Even)
+    {
         var settings = new SerialPortSettings
         {
             PortName = portName,
             BaudRate = baudRate,
             Parity = parity,
             DataBits = dataBits,
-            StopBits = stopBits
+            StopBits = stopBits,
+            Crc16Variant = crc16Variant
         };
         return CreateRtuClient(settings);
     }

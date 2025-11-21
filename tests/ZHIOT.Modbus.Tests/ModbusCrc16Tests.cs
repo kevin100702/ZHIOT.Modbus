@@ -146,4 +146,92 @@ public class ModbusCrc16Tests
         Assert.AreEqual(crc1, crc2);
         Assert.AreEqual(crc2, crc3);
     }
+
+    [TestMethod]
+    public void Calculate_EvenVariant_ReturnsCorrectCrc()
+    {
+        // Arrange: 使用已知的 Modbus 标准帧
+        byte[] data = { 0x01, 0x03, 0x00, 0x00, 0x00, 0x0A };
+        ushort expectedCrc = 0xCDC5; // 已知正确值
+
+        // Act
+        ushort actualCrc = ModbusCrc16.Calculate(data, Crc16Variant.Even);
+
+        // Assert
+        Assert.AreEqual(expectedCrc, actualCrc);
+    }
+
+    [TestMethod]
+    public void Calculate_OddVariant_ReturnsInvertedCrc()
+    {
+        // Arrange
+        byte[] data = { 0x01, 0x03, 0x00, 0x00, 0x00, 0x0A };
+        ushort evenCrc = ModbusCrc16.Calculate(data, Crc16Variant.Even);
+        
+        // Act
+        ushort oddCrc = ModbusCrc16.Calculate(data, Crc16Variant.Odd);
+
+        // Assert
+        // 奇校验 = 偶校验取反
+        Assert.AreEqual((ushort)(evenCrc ^ 0xFFFF), oddCrc);
+    }
+
+    [TestMethod]
+    public void Verify_EvenVariant_ValidFrame_ReturnsTrue()
+    {
+        // Arrange: 标准 Modbus 偶校验帧
+        byte[] frame = { 0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD };
+        
+        // Act
+        bool isValid = ModbusCrc16.Verify(frame, Crc16Variant.Even);
+        
+        // Assert
+        Assert.IsTrue(isValid);
+    }
+
+    [TestMethod]
+    public void Verify_OddVariant_ValidFrame_ReturnsTrue()
+    {
+        // Arrange: 构建奇校验帧
+        byte[] data = { 0x01, 0x03, 0x00, 0x00, 0x00, 0x0A };
+        ushort oddCrc = ModbusCrc16.Calculate(data, Crc16Variant.Odd);
+        
+        byte[] frame = new byte[data.Length + 2];
+        data.CopyTo(frame, 0);
+        frame[data.Length] = (byte)(oddCrc & 0xFF);
+        frame[data.Length + 1] = (byte)(oddCrc >> 8);
+        
+        // Act
+        bool isValid = ModbusCrc16.Verify(frame, Crc16Variant.Odd);
+        
+        // Assert
+        Assert.IsTrue(isValid);
+    }
+
+    [TestMethod]
+    public void Verify_WrongVariant_ReturnsFalse()
+    {
+        // Arrange: 偶校验帧用奇校验验证应该失败
+        byte[] frame = { 0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0xC5, 0xCD };
+        
+        // Act
+        bool isValid = ModbusCrc16.Verify(frame, Crc16Variant.Odd);
+        
+        // Assert
+        Assert.IsFalse(isValid);
+    }
+
+    [TestMethod]
+    public void Calculate_BothVariants_DifferentResults()
+    {
+        // Arrange
+        byte[] data = { 0x01, 0x03, 0x00, 0x00, 0x00, 0x0A };
+        
+        // Act
+        ushort evenCrc = ModbusCrc16.Calculate(data, Crc16Variant.Even);
+        ushort oddCrc = ModbusCrc16.Calculate(data, Crc16Variant.Odd);
+        
+        // Assert
+        Assert.AreNotEqual(evenCrc, oddCrc);
+    }
 }

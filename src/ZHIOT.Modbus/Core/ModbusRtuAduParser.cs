@@ -14,12 +14,24 @@ public static class ModbusRtuAduParser
     /// <exception cref="InvalidOperationException">当 ADU 长度不足或 CRC 校验失败时抛出</exception>
     public static ReadOnlySpan<byte> ExtractPdu(ReadOnlySpan<byte> adu)
     {
+        return ExtractPdu(adu, Crc16Variant.Even);
+    }
+
+    /// <summary>
+    /// 从完整的 RTU ADU 中提取 PDU
+    /// </summary>
+    /// <param name="adu">完整的 RTU ADU (SlaveId + PDU + CRC)</param>
+    /// <param name="crc16Variant">CRC-16 变体（偶校验或奇校验）</param>
+    /// <returns>PDU 部分的数据</returns>
+    /// <exception cref="InvalidOperationException">当 ADU 长度不足或 CRC 校验失败时抛出</exception>
+    public static ReadOnlySpan<byte> ExtractPdu(ReadOnlySpan<byte> adu, Crc16Variant crc16Variant)
+    {
         // 验证最小长度
         if (adu.Length < RtuAdu.MinSize)
             throw new InvalidOperationException($"ADU too short: {adu.Length} bytes (minimum {RtuAdu.MinSize})");
 
         // 验证 CRC
-        if (!ModbusCrc16.Verify(adu))
+        if (!ModbusCrc16.Verify(adu, crc16Variant))
             throw new InvalidOperationException("CRC verification failed");
 
         // 返回 PDU 部分（跳过 SlaveId [1 字节]，去除 CRC [2 字节]）
@@ -46,9 +58,20 @@ public static class ModbusRtuAduParser
     /// <returns>如果 CRC 校验通过返回 true</returns>
     public static bool VerifyCrc(ReadOnlySpan<byte> adu)
     {
+        return VerifyCrc(adu, Crc16Variant.Even);
+    }
+
+    /// <summary>
+    /// 验证 ADU 的 CRC 但不提取数据
+    /// </summary>
+    /// <param name="adu">完整的 RTU ADU</param>
+    /// <param name="crc16Variant">CRC-16 变体（偶校验或奇校验）</param>
+    /// <returns>如果 CRC 校验通过返回 true</returns>
+    public static bool VerifyCrc(ReadOnlySpan<byte> adu, Crc16Variant crc16Variant)
+    {
         if (adu.Length < RtuAdu.MinSize)
             return false;
 
-        return ModbusCrc16.Verify(adu);
+        return ModbusCrc16.Verify(adu, crc16Variant);
     }
 }

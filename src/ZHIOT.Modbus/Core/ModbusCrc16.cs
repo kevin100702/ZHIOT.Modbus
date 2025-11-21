@@ -23,12 +23,29 @@ public static class ModbusCrc16
     /// <returns>CRC-16 校验码</returns>
     public static ushort Calculate(ReadOnlySpan<byte> data)
     {
+        return Calculate(data, Crc16Variant.Even);
+    }
+
+    /// <summary>
+    /// 计算数据的 CRC-16 校验码
+    /// </summary>
+    /// <param name="data">要计算 CRC 的数据</param>
+    /// <param name="variant">CRC-16 变体（偶校验或奇校验）</param>
+    /// <returns>CRC-16 校验码</returns>
+    public static ushort Calculate(ReadOnlySpan<byte> data, Crc16Variant variant)
+    {
         ushort crc = 0xFFFF;
 
         foreach (byte b in data)
         {
             byte tableIndex = (byte)(crc ^ b);
             crc = (ushort)((crc >> 8) ^ CrcTable[tableIndex]);
+        }
+
+        // 根据变体类型决定是否取反
+        if (variant == Crc16Variant.Odd)
+        {
+            crc ^= 0xFFFF;
         }
 
         return crc;
@@ -41,6 +58,17 @@ public static class ModbusCrc16
     /// <returns>如果 CRC 校验通过返回 true，否则返回 false</returns>
     public static bool Verify(ReadOnlySpan<byte> frame)
     {
+        return Verify(frame, Crc16Variant.Even);
+    }
+
+    /// <summary>
+    /// 验证包含 CRC 的完整帧 (最后两字节为 CRC)
+    /// </summary>
+    /// <param name="frame">包含 CRC 的完整帧</param>
+    /// <param name="variant">CRC-16 变体（偶校验或奇校验）</param>
+    /// <returns>如果 CRC 校验通过返回 true，否则返回 false</returns>
+    public static bool Verify(ReadOnlySpan<byte> frame, Crc16Variant variant)
+    {
         if (frame.Length < 3)
             return false;
 
@@ -51,7 +79,7 @@ public static class ModbusCrc16
         ushort frameCrc = BinaryPrimitives.ReadUInt16LittleEndian(frame.Slice(frame.Length - 2));
         
         // 计算数据的 CRC
-        ushort calculatedCrc = Calculate(data);
+        ushort calculatedCrc = Calculate(data, variant);
 
         return frameCrc == calculatedCrc;
     }

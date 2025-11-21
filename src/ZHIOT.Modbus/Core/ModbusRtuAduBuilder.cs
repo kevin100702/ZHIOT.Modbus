@@ -17,6 +17,19 @@ public static class ModbusRtuAduBuilder
     /// <returns>写入的总字节数</returns>
     public static int BuildAdu(Span<byte> buffer, byte slaveId, ReadOnlySpan<byte> pdu)
     {
+        return BuildAdu(buffer, slaveId, pdu, Crc16Variant.Even);
+    }
+
+    /// <summary>
+    /// 构建完整的 RTU ADU (SlaveId + PDU + CRC)
+    /// </summary>
+    /// <param name="buffer">目标缓冲区</param>
+    /// <param name="slaveId">从站 ID</param>
+    /// <param name="pdu">协议数据单元</param>
+    /// <param name="crc16Variant">CRC-16 变体（偶校验或奇校验）</param>
+    /// <returns>写入的总字节数</returns>
+    public static int BuildAdu(Span<byte> buffer, byte slaveId, ReadOnlySpan<byte> pdu, Crc16Variant crc16Variant)
+    {
         if (buffer.Length < 1 + pdu.Length + 2)
             throw new ArgumentException("Buffer is too small", nameof(buffer));
 
@@ -29,7 +42,7 @@ public static class ModbusRtuAduBuilder
         int frameLength = 1 + pdu.Length;
 
         // 计算并添加 CRC (小端序)
-        var crc = ModbusCrc16.Calculate(buffer.Slice(0, frameLength));
+        var crc = ModbusCrc16.Calculate(buffer.Slice(0, frameLength), crc16Variant);
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.Slice(frameLength), crc);
 
         return frameLength + 2; // +2 for CRC
