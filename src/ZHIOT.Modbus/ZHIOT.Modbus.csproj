@@ -5,7 +5,23 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    
+    <!-- NuGet Package Metadata -->
+    <PackageId>ZHIOT.Modbus</PackageId>
+    <Authors>kevin100702</Authors>
+    <Description>A modern Modbus library for .NET supporting RTU, ASCII, and TCP protocols.</Description>
+    <PackageTags>modbus;rtu;ascii;tcp;iot;industrial;serial;communication</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/kevin100702/ZHIOT.Modbus</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/kevin100702/ZHIOT.Modbus</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="System.IO.Pipelines" Version="9.0.10" />
